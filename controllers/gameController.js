@@ -148,85 +148,76 @@ exports.getGameById = async (req, res) => {
 // @access  Private
 exports.joinGame = async (req, res) => {
   try {
-    const game = await Game.findById(req.params.id);
-    
-    if (!game) {
-      return res.status(404).json({ error: 'Game not found' });
+    const gameId = req.params.id;
+    if (!gameId || gameId === 'undefined') {
+      return res.status(400).json({ error: 'Invalid game ID' });
     }
-    
+
+    const game = await Game.findById(gameId);
+    if (!game) return res.status(404).json({ error: 'Game not found' });
+
+    const userId = req.user.id;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    if (game.players.some(p => p.id === userId)) {
+      // Already joined — just return the game
+      return res.json(game);
+    }
+
     if (game.status !== 'waiting') {
       return res.status(400).json({ error: 'Game has already started' });
     }
-    
-    const user = await User.findById(req.user.id);
-    
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
+
     if (user.balance < game.stake) {
-      return res.status(400).json({ error: 'Insufficient balance' });
+      return res.status(400).json({ error: 'Insufficient balance to join' });
     }
-    
-    // Check if user is already in the game
-    const existingPlayerIndex = game.players.findIndex(p => p.id === user._id.toString());
-    
-    if (existingPlayerIndex !== -1) {
-      return res.status(400).json({ error: 'Already joined this game' });
+
+    const aiIndex = game.players.findIndex(p => p.isAI);
+    if (aiIndex === -1) {
+      return res.status(400).json({ error: 'No slot available to join' });
     }
-    
-    // Check if game is full
-    if (game.players.filter(p => !p.isAI).length >= 4) {
-      return res.status(400).json({ error: 'Game is full' });
-    }
-    
-    // Find an AI player to replace
-    const aiPlayerIndex = game.players.findIndex(p => p.isAI);
-    
-    if (aiPlayerIndex === -1) {
-      return res.status(400).json({ error: 'No AI player to replace' });
-    }
-    
-    // Deduct stake from user's balance
+
+    // Deduct stake
     user.balance -= game.stake;
     await user.save();
-    
-    // Replace AI player with human player
-    game.players[aiPlayerIndex] = {
+
+    // Replace AI with user
+    game.players[aiIndex] = {
       id: user._id.toString(),
       username: user.username,
       isAI: false,
-      hand: game.players[aiPlayerIndex].hand,
+      hand: game.players[aiIndex].hand,
       isDropped: false,
-      canDrop: canPlayerDrop(game.players[aiPlayerIndex], false),
+      canDrop: canPlayerDrop(game.players[aiIndex], false),
       score: 0,
       penalties: 0,
       avatar: user.avatar
     };
-    
+
     await game.save();
-    
-    // Hide other players' cards for security
+
+    // Hide cards of other players for security
     const gameData = game.toObject();
-    
-    gameData.players.forEach(player => {
-      if (player.id !== user._id.toString() && !player.isDropped) {
-        player.hand = player.hand.map(card => ({
+    gameData.players.forEach(p => {
+      if (p.id !== userId && !p.isDropped) {
+        p.hand = p.hand.map(card => ({
           ...card,
-          suit: '?',
           rank: '?',
+          suit: '?',
           value: 0,
           isHidden: true
         }));
       }
     });
-    
+
     res.json(gameData);
-  } catch (error) {
-    console.error('Join game error:', error);
+  } catch (err) {
+    console.error('Join game error:', err);
     res.status(500).json({ error: 'Server error joining game' });
   }
 };
+
 
 // @route   POST /api/games/:id/action
 // @desc    Perform a game action (draw, discard, drop)
