@@ -6,7 +6,7 @@ const Game = require('../models/Game');
 // @access  Public
 exports.getTables = async (req, res) => {
   try {
-    const tables = await Table.find().sort({ amount: 1 });
+    const tables = await Table.find().populate('activeGames');
     res.json(tables);
   } catch (error) {
     console.error('Get tables error:', error);
